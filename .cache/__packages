@@ -1,0 +1,12 @@
+base
+rsconnect
+shiny
+zoo
+dplyr
+stringr
+ggplot2
+lubridate
+knitr
+plotly
+devtools
+slidify

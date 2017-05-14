@@ -1,0 +1,151 @@
+---
+title       : Week 4 presentation
+subtitle    : Shiny app
+author      : Nick Murray
+job         : 
+framework   : io2012        # {io2012, html5slides, shower, dzslides, ...}
+highlighter : highlight.js  # {highlight.js, prettify, highlight}
+hitheme     : tomorrow      # 
+widgets     : []            # {mathjax, quiz, bootstrap}
+mode        : selfcontained # {standalone, draft}
+knit        : slidify::knit2slides
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Synopsis
+
+This presentation and the [accompanying Shiny app](https://flutable.shinyapps.io/ds09week4shiny/) shows air quality in Florey, a suburb to the north of Canberra. The author lives nearby. There are a high proportion of wood-burning fires in this part of the city, and I am interested in the 2.5μM and 10μM particulate readings.
+
+I want to be able to "look back" a number of days and see the quantity of particulates I have breathed in - I'm a runner.
+
+---
+## Data 
+
+Air quality data is from the [ACT government's data portal](http://www.health.act.gov.au/public-information/public-health/act-air-quality-monitoring/real-time-graphs). 
+
+The downloadable dataset is ~12 MB, so to speed up the Shiny app, I preprocessed the data to extract relevant features, then uploaded to Dropbox.
+The air quality data contains the following relevant variables.
+
+- <b>PM10</b>       particulate matter less than 10 microns
+- <b>PM2.5</b>      particulate matter less than 2.5 microns
+- <b>Date</b>       date of reading
+- <b>Time</b>       time of reading
+
+```{r LoadAndPreProcChk,echo=FALSE}
+options(scipen = 1, digits = 2)            # numbers > 10^5 in scientific notation, 2 sig figs
+suppressPackageStartupMessages(library(zoo,       warn.conflicts = FALSE)) # for na.locf()
+suppressPackageStartupMessages(library(dplyr,     warn.conflicts = FALSE))
+suppressPackageStartupMessages(library(stringr,   warn.conflicts = FALSE))
+suppressPackageStartupMessages(library(ggplot2,   warn.conflicts = FALSE))
+suppressPackageStartupMessages(library(lubridate, warn.conflicts = FALSE))
+suppressPackageStartupMessages(library(knitr,     warn.conflicts = FALSE))
+suppressPackageStartupMessages(library(plotly,    warn.conflicts = FALSE))
+suppressPackageStartupMessages(library(stringr,    warn.conflicts = FALSE))
+# Download data if necessary
+fnData <- "CanberraAirQuality.csv"
+
+if ( !file.exists(fnData )) {
+  #  message("Data file(s) missing, downloading....")
+    download.file("https://www.data.act.gov.au/api/views/vm7b-spx8/rows.csv?accessType=DOWNLOAD&bom=true&format=true", fnData)
+}
+# Read data
+if (!exists("airdata")) {
+    #message("Air quality data missing, now reading. This may take a few seconds....")
+    airdata <- read.csv(file = fnData, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+} 
+```
+
+```{r SubSetData,echo=FALSE}
+# Fix invalid column name
+colnames(airdata)[1] <- "Name"
+
+# Remove Civic and Monash
+airdata <- airdata[ airdata$Name %in% c("Florey"), ]
+```
+
+---
+## Data processing 1
+Data processing was mostly unremarkable, but here are some of the more interesting aspects of it:
+
+Using %in% to select columns by name
+
+```{r dp1,echo=TRUE}
+# Keep only relevant columns
+airdata <- airdata[ ,(colnames(airdata) %in% c("Name","PM10","PM2.5","Date","Time"))]
+```
+
+```{r dp2,echo=FALSE}
+# Check for NAs in dates
+datecheck <- sum(!is.na(strptime(airdata$Date,"%d-%b-%y"))) #should be 0 if all dates convert
+if (datecheck > 0)
+{stop("dates do not convert")}
+
+# convert hour and day fields to a single POSIX format DateTime
+airdata$DateTime <- str_c(airdata$Date, ' ', airdata$Time)
+airdata$DateTime <- as.POSIXct(airdata$DateTime, format="%d %b %Y %H:%M:%S")
+
+# remove Date and Time
+airdata <- airdata[ , !(colnames(airdata) %in% c("Date", "Time"))]
+```
+Using the Zoo package's na.locf ("last observation carry forward") to impute NA values. See [StackOverflow](http://stackoverflow.com/questions/7735647/replacing-nas-with-latest-non-na-value) for more information.
+
+```{r, dp3,echo=TRUE}
+# impute missing values. If an NA, carry forward last observation
+airdata$PM10  <- na.locf(airdata$PM10)
+airdata$PM2.5 <- na.locf(airdata$PM2.5)
+```
+
+---
+## Shiny app features
+As Plotly's x/y axis control isn't reactive, I added a reactive x-axis ticks function to change the scaling:
+
+         newticks <- reactive({
+           if (input$lookbackdays <=5){  #lookbackdays is the duration you summarise over
+             ticks <- 86400000.0/24      #There are 8.6 million milliseconds/day.
+                                         #Ticks here are at hourly intervals
+           }
+            else{
+              ticks <- 86400000.0/6      #For > 5 days, ticks are at 4-hourly intervals
+            }      return(ticks)
+         })
+
+  
+<!-- ---Remove these comments to embed Plotly graphs into the presentation   -->
+<!-- ## Example  -->
+<!-- ```{r} -->
+<!-- # server side -->
+<!-- # ensure date time data are in order, else you get some very odd graphs! -->
+<!-- dt <- order(airdata$DateTime, decreasing = FALSE)  -->
+<!-- airdata <- airdata[dt, ] -->
+<!-- # define example lookback -->
+<!-- lookbackdays <- 10 -->
+<!-- lookback <- as.POSIXct(Sys.time() - (86400 * lookbackdays))  -->
+<!-- # extract data from 'lookback' days ago -->
+<!-- newairdata <- airdata[airdata$DateTime > lookback,  ]   #start from airdata so user doesn't have to reload it -->
+<!-- newairdata$cumsumPM10   <- cumsum(newairdata$PM10) -->
+<!-- newairdata$cumsumPM2.5  <- cumsum(newairdata$PM2.5) -->
+
+<!--  pFlorey<- plot_ly(newairdata, x = ~DateTime, y = ~PM10, name = 'Particulates 10uM', type = 'scatter', mode = 'lines' , height = 200, width= 500) %>% -->
+<!--             add_trace(y = ~ PM2.5, name='Particulates 2.5uM', mode='lines') %>% -->
+<!--             layout(title = "Pollutants in Florey, last few days", -->
+<!--               xaxis = list(title = "Date"), -->
+<!--               yaxis = list (title = "Pollutant concentration")) -->
+
+<!-- pFlorey -->
+<!-- pFloreyCum <- plot_ly(newairdata, x = ~DateTime, y = ~ cumsumPM10, name="Cumulative sum of PM10 particulates",  -->
+<!--                       type='scatter', mode='lines', fill='tozeroy', height = 200, width= 500) %>% -->
+<!--            add_trace(y = ~ cumsumPM2.5, name="Cumulative sum of PM 2.5 particulates", fill='tozeroy') %>% -->
+<!--             layout(title = str_c("Cumulative Pollutants in Florey, last ", lookbackdays, " days"), -->
+<!--               xaxis = list(title = "Date"), -->
+<!--               yaxis = list (title = "Pollutant concentration")) -->
+<!-- pFloreyCum -->
+<!-- ``` -->
+
+
+
+
+
